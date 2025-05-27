@@ -8,10 +8,14 @@ import ta
 import requests
 from flask import Flask
 from threading import Thread
+from dotenv import load_dotenv
+
+# ==== Завантаження змінних середовища ====
+load_dotenv()
 
 # ==== Налаштування ====
-bot_token = '7969851249:AAFQMw33K4rKheCHwqW-IcCMgekWCWDqqY4'
-chat_id = -1002304475406
+bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+chat_id = os.getenv("TELEGRAM_CHAT_ID")
 openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 NEWSAPI_URL = "https://newsapi.org/v2/everything"
@@ -82,7 +86,7 @@ def check_news_for_symbol(symbol):
 def status(message):
     bot.send_message(message.chat.id, "✅ Бот активний та працює без помилок.")
 
-# ==== Оновлена функція генерації сигналу ====
+# ==== Генерація сигналу ====
 def get_signal(symbol):
     try:
         candles = exchange.fetch_ohlcv(symbol, timeframe='15m', limit=200)
@@ -90,7 +94,6 @@ def get_signal(symbol):
 
         avg_volume = df['volume'].iloc[-10:].mean()
         if avg_volume < 10000:
-            print(f"⚠️ {symbol}: малий середній об'єм ({avg_volume}), сигнал пропущено.")
             return None, None, None, None, None
 
         df['ema50'] = ta.trend.ema_indicator(df['close'], window=50)
@@ -99,7 +102,6 @@ def get_signal(symbol):
         macd = ta.trend.MACD(df['close'])
         df['macd'] = macd.macd()
         df['macd_signal'] = macd.macd_signal()
-        df['atr'] = ta.volatility.AverageTrueRange(df['high'], df['low'], df['close'], window=14).average_true_range()
 
         last = df.iloc[-1]
         change = (last['close'] - df['close'].iloc[-2]) / df['close'].iloc[-2] * 100
@@ -107,23 +109,22 @@ def get_signal(symbol):
         if change >= 2.0 and last['ema50'] > last['ema200'] and last['rsi'] > 50 and last['macd'] > last['macd_signal']:
             tp = round(last['close'] * 1.05, 6)
             sl = round(last['close'] * 0.98, 6)
-            msg = (f"📈 LONG Signal\n📊 {symbol}\n📅 Вхід: ${last['close']:.6f}\n🌟 TP: ${tp}\n📛 SL: ${sl}")
+            msg = f"📈 LONG Signal\n📊 {symbol}\n📅 Вхід: ${last['close']:.6f}\n🌟 TP: ${tp}\n📛 SL: ${sl}"
             return "LONG", msg, last['close'], tp, sl
 
         elif change <= -5.0 and last['ema50'] < last['ema200'] and last['rsi'] < 50 and last['macd'] < last['macd_signal']:
             tp = round(last['close'] * 0.95, 6)
             sl = round(last['close'] * 1.02, 6)
-            msg = (f"📉 SHORT Signal\n📊 {symbol}\n📅 Вхід: ${last['close']:.6f}\n🌟 TP: ${tp}\n📛 SL: ${sl}")
+            msg = f"📉 SHORT Signal\n📊 {symbol}\n📅 Вхід: ${last['close']:.6f}\n🌟 TP: ${tp}\n📛 SL: ${sl}"
             return "SHORT", msg, last['close'], tp, sl
 
-        else:
-            return None, None, None, None, None
+        return None, None, None, None, None
 
     except Exception as e:
         print(f"❌ Помилка при аналізі {symbol}: {e}")
         return None, None, None, None, None
 
-# ==== Генерація стратегії від ШІ ====
+# ==== Стратегія ШІ ====
 def generate_strategy_with_data(symbol, direction):
     try:
         candles = exchange.fetch_ohlcv(symbol, timeframe='15m', limit=50)
@@ -169,33 +170,21 @@ def generate_strategy_with_data(symbol, direction):
         print(f"❌ Помилка при генерації стратегії: {e}")
         return "⚠️ Не вдалося отримати стратегію від ШІ."
 
-# ==== Умова надсилання сигналів ====
-def should_send_signals():
-    return True
-
-# ==== Головний цикл надсилання сигналів ====
+# ==== Головний цикл ====
 def send_signals_loop():
     while True:
-        if not should_send_signals():
-            print("⛔ ШІ вирішив не надсилати сигнали зараз.")
-        else:
-            print(f"🔎 Перевірка сигналів для {len(symbols)} монет...")
-            for symbol in symbols:
-                direction, signal_msg, entry, tp, sl = get_signal(symbol)
-                if signal_msg:
-                    news_keywords = check_news_for_symbol(symbol)
-                    if news_keywords:
-                        warning = f"\n\n⚠️ Попередження: знайдено новини з ключовими словами: {', '.join(news_keywords)}"
-                    else:
-                        warning = ""
-
-                    strategy = generate_strategy_with_data(symbol, direction)
-                    full_msg = f"{signal_msg}{warning}\n\n📊 Стратегія ШІ:\n{strategy}"
-
-                    try:
-                        bot.send_message(chat_id, full_msg)
-                    except Exception as e:
-                        print(f"❌ Помилка при надсиланні повідомлення: {e}")
+        print(f"🔎 Перевірка сигналів для {len(symbols)} монет...")
+        for symbol in symbols:
+            direction, signal_msg, entry, tp, sl = get_signal(symbol)
+            if signal_msg:
+                news_keywords = check_news_for_symbol(symbol)
+                warning = f"\n\n⚠️ Попередження: знайдено новини з ключовими словами: {', '.join(news_keywords)}" if news_keywords else ""
+                strategy = generate_strategy_with_data(symbol, direction)
+                full_msg = f"{signal_msg}{warning}\n\n📊 Стратегія ШІ:\n{strategy}"
+                try:
+                    bot.send_message(chat_id, full_msg)
+                except Exception as e:
+                    print(f"❌ Помилка при надсиланні повідомлення: {e}")
         print("⏳ Очікування 15 хвилин...\n")
         time.sleep(15 * 60)
 
