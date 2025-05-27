@@ -7,23 +7,18 @@ import pandas as pd
 import ta
 import requests
 from flask import Flask, request
-from threading import Thread
 from dotenv import load_dotenv
 
 # ==== Завантаження змінних середовища ====
 load_dotenv()
 
-# ==== Налаштування ====
 bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
 chat_id = os.getenv("TELEGRAM_CHAT_ID")
 openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 NEWSAPI_URL = "https://newsapi.org/v2/everything"
 
-exchange = ccxt.kucoin({
-    'options': {'defaultType': 'spot'}
-})
-
+exchange = ccxt.kucoin({'options': {'defaultType': 'spot'}})
 bot = telebot.TeleBot(bot_token, threaded=False)
 
 # Очистка і оновлення команд
@@ -38,7 +33,6 @@ app = Flask(__name__)
 def home():
     return "✅ Бот працює!"
 
-# ==== Webhook маршрут для Telegram ====
 @app.route(f"/{bot_token}", methods=["POST"])
 def webhook():
     json_string = request.get_data().decode("utf-8")
@@ -46,14 +40,12 @@ def webhook():
     bot.process_new_updates([update])
     return "OK", 200
 
-# ==== Завантаження монет ====
 def load_symbols_from_file(filename="symbols.txt"):
     with open(filename, "r") as f:
         return [line.strip() for line in f if line.strip()]
 
 symbols = load_symbols_from_file()
 
-# ==== Перевірка новин по монеті ====
 def check_news_for_symbol(symbol):
     if not NEWSAPI_KEY:
         print("⚠️ NEWSAPI_KEY не встановлено")
@@ -88,12 +80,10 @@ def check_news_for_symbol(symbol):
         print(f"❌ Помилка при отриманні новин для {symbol}: {e}")
         return []
 
-# ==== Обробка команди статусу ====
 @bot.message_handler(commands=['status'])
 def status(message):
     bot.send_message(message.chat.id, "✅ Бот активний та працює без помилок.")
 
-# ==== Генерація сигналу ====
 def get_signal(symbol):
     try:
         candles = exchange.fetch_ohlcv(symbol, timeframe='15m', limit=200)
@@ -131,7 +121,6 @@ def get_signal(symbol):
         print(f"❌ Помилка при аналізі {symbol}: {e}")
         return None, None, None, None, None
 
-# ==== Стратегія ШІ ====
 def generate_strategy_with_data(symbol, direction):
     try:
         candles = exchange.fetch_ohlcv(symbol, timeframe='15m', limit=50)
@@ -177,7 +166,6 @@ def generate_strategy_with_data(symbol, direction):
         print(f"❌ Помилка при генерації стратегії: {e}")
         return "⚠️ Не вдалося отримати стратегію від ШІ."
 
-# ==== Відправка сигналів (окремий потік) ====
 def send_signals_loop():
     while True:
         print(f"🔎 Перевірка сигналів для {len(symbols)} монет...")
@@ -195,20 +183,22 @@ def send_signals_loop():
         print("⏳ Очікування 15 хвилин...\n")
         time.sleep(15 * 60)
 
-# ==== Запуск сервера і сигналів ====
 def run_flask():
-  app.run(host='0.0.0.0', port=int(os.environ["PORT"]))
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
 
 if __name__ == "__main__":
-    # Встановлення webhook
-    WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # https://your-app-name.onrender.com
-    bot.remove_webhook()
-    bot.set_webhook(url=f"{WEBHOOK_URL}/{bot_token}")
+    external_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+    if not external_hostname:
+        print("❌ Помилка: не знайдено RENDER_EXTERNAL_HOSTNAME")
+        exit(1)
 
-    # Запуск Flask в окремому потоці
+    webhook_url = f"https://{external_hostname}/{bot_token}"
+    bot.remove_webhook()
+    success = bot.set_webhook(url=webhook_url)
+    print("🔗 Webhook встановлено:", success)
+
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.start()
 
-    # Запуск циклу відправки сигналів
     signals_thread = threading.Thread(target=send_signals_loop, daemon=True)
     signals_thread.start()
