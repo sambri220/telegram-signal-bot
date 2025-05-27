@@ -6,7 +6,7 @@ import os
 import pandas as pd
 import ta
 import requests
-from flask import Flask
+from flask import Flask, request
 from threading import Thread
 from dotenv import load_dotenv
 
@@ -24,20 +24,21 @@ exchange = ccxt.kucoin({
     'options': {'defaultType': 'spot'}
 })
 
-bot = telebot.TeleBot(bot_token)
+bot = telebot.TeleBot(bot_token, threaded=False)  # threaded=False для webhook
 
-app = Flask('')
+app = Flask(__name__)
 
 @app.route('/')
 def home():
     return "✅ Бот працює!"
 
-def run():
-    app.run(host='0.0.0.0', port=8080)
-
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
+# ==== Webhook маршрут для Telegram ====
+@app.route(f"/{bot_token}", methods=["POST"])
+def webhook():
+    json_string = request.get_data().decode("utf-8")
+    update = telebot.types.Update.de_json(json_string)
+    bot.process_new_updates([update])
+    return "OK", 200
 
 # ==== Завантаження монет ====
 def load_symbols_from_file(filename="symbols.txt"):
@@ -170,7 +171,7 @@ def generate_strategy_with_data(symbol, direction):
         print(f"❌ Помилка при генерації стратегії: {e}")
         return "⚠️ Не вдалося отримати стратегію від ШІ."
 
-# ==== Головний цикл ====
+# ==== Відправка сигналів (окремий потік) ====
 def send_signals_loop():
     while True:
         print(f"🔎 Перевірка сигналів для {len(symbols)} монет...")
@@ -188,8 +189,20 @@ def send_signals_loop():
         print("⏳ Очікування 15 хвилин...\n")
         time.sleep(15 * 60)
 
-# ==== Запуск ====
+# ==== Запуск сервера і сигналів ====
+def run_flask():
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
+
 if __name__ == "__main__":
-    keep_alive()
-    threading.Thread(target=send_signals_loop, daemon=True).start()
-    bot.infinity_polling()
+    # Встановлення webhook
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # https://your-app-name.onrender.com
+    bot.remove_webhook()
+    bot.set_webhook(url=f"{WEBHOOK_URL}/{bot_token}")
+
+    # Запуск Flask в окремому потоці
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.start()
+
+    # Запуск циклу відправки сигналів
+    signals_thread = threading.Thread(target=send_signals_loop, daemon=True)
+    signals_thread.start()
