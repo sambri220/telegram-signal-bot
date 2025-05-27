@@ -24,7 +24,13 @@ exchange = ccxt.kucoin({
     'options': {'defaultType': 'spot'}
 })
 
-bot = telebot.TeleBot(bot_token, threaded=False)  # threaded=False для webhook
+bot = telebot.TeleBot(bot_token, threaded=False)
+
+# Очистка і оновлення команд
+bot.set_my_commands([])
+bot.set_my_commands([
+    telebot.types.BotCommand("status", "Перевірити статус бота")
+])
 
 app = Flask(__name__)
 
